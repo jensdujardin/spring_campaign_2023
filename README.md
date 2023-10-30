@@ -7,8 +7,7 @@ This repository contains the code associated with the scientific manuscript titl
 ## Table of Contents
 
 1. [Introduction](#introduction)
-2. [Installation](#installation)
-3. [Usage](#usage)
+2. [Project structure](#Project-structure)
 4. [Contributing](#contributing)
 5. [License](#license)
 
@@ -16,28 +15,24 @@ This repository contains the code associated with the scientific manuscript titl
 
 Detailed background and the objective of the study are provided in the manuscript. This code repository aims to supplement the manuscript by providing the necessary code to replicate the study's findings and analyses.
 
-## Installation
-
-To clone and run this application, you'll need [Git](https://git-scm.com) and [Python](https://www.python.org/downloads/) (which comes with `pip`) installed on your computer. From your command line:
+## Project structure
 
 ```bash
-# Clone this repository
-$ git clone https://github.com/yourusername/yourrepositoryname
+├── config.yaml
+├── data
+│   ├── analysis
+│       ├── 
+│   └── raw
+        ├── 
 
-# Go into the repository
-$ cd yourrepositoryname
-
-# Install dependencies
-$ pip install -r requirements.txt
-```
-
-## Usage
-
-Explain here how to run the scripts and code after installation to replicate your findings.
-
-```bash
-# Example
-$ python your_script.py
+├── hpc_config
+│   ├── cluster.yaml
+│   └── config.yaml
+├── README.md
+├── samples.csv
+├── scripts
+│   ├── TEP_analysis.ipynb
+└── snakefile
 ```
 
 ## Contributing
