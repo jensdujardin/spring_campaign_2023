@@ -23,8 +23,8 @@ Detailed background and the objective of the study are provided in the manuscrip
 │   ├── analysis
 │       ├── 
 │   └── raw
-        ├── 
-
+│       ├── 
+│
 ├── hpc_config
 │   ├── cluster.yaml
 │   └── config.yaml
