@@ -1,0 +1,340 @@
+---
+title: "CANOE FRRF report"
+output: pdf_document
+date: "2023-07-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+require(plot3D)
+require(FRRF)
+require(oce)
+require(marelac)
+
+source("FRRFscripts.R")
+```
+
+# Underway data
+
+Time in the underway data is in CEST, which is two hours later than the greenland time, on which our clocks were set.
+
+```{r, echo=FALSE}
+load("../../cruise/processed_data/underway.rda")
+load("../../cruise/processed_data/events.rda")
+load("../../cruise/accessory/LATLONcoast.rda")
+load("../../cruise/processed_data/stations.rda") 
+J0 <- 19553
+Greenland <- subset(UnderWay, subset=longitude <= -42)
+Greenland$Timestamp <- as.POSIXct(Greenland$Timestamp)
+```
+
+# FRRF station data
+
+```{r}
+load(file = "../processed_data/FRRFlist.rda")     # FRRFlist
+load(file = "../processed_data/FRRFunderway.rda") # FRRFunderway
+```
+
+## Standardize the FRRF data 
+
+```{r}
+frrflist <- FRRFlist  # Take a copy
+FRRFlist <- NULL
+ff <- unique(frrflist$file)
+for (i in ff){
+  frrf <- subset(frrflist, subset=file==i)
+  FRRFlist <- rbind(FRRFlist,
+                  standardizeFRRF(frrf=frrf, 
+                            Fblanc=frrf$Fblanc, 
+                            keep = c("file", "depth", "repl", "JVPII_est",
+                                      "latitude", "longitude")))
+}
+
+FRRFfiles <- unique(FRRFlist[,c("file", "station", "date", "depth", "repl", 
+                                "latitude", "longitude", "Fblanc")])
+
+```
+
+```{r}
+frrfunderway <- FRRFunderway
+FRRFunderway <- NULL
+ff <- unique(frrfunderway$file)
+for (i in ff){
+  frrf <- subset(frrfunderway, subset=file==i)
+  FRRFunderway <- rbind(FRRFunderway,
+                  standardizeFRRF(frrf=frrf, 
+                            Fblanc=frrf$Fblanc, 
+                            keep = c("file", "JVPII_est", 
+                                     "longitude", "latitude")))
+}
+
+UNDERWAYfiles <- unique(FRRFunderway[,c("file", "station", "date", 
+                                "latitude", "longitude", "Fblanc")])
+```
+
+## PE curve
+
+The JVPII variable is fitted as a function of light. It is in units of 
+mmol electrons m-3 h-1. 
+
+To convert JVPII to mg C m3 h-1, we use the electron requirement for 
+C-fixation. We use 5 (mol elektronen/mol C):
+
+	P = JVPII/PHIe,C × 12
+
+```{r, fig.width=8, fig.height=10, warning=FALSE}
+par(mfrow=c(5,5), mar=c(4,4,4,0))
+inot <- which(FRRFlist$Fo < 0) 
+
+#response <- "JVPIIest"
+response = "JVPII"
+
+if (length(inot)) FRRFlist <- FRRFlist[-inot, ]
+Uin <- unique(FRRFlist$file)
+FIT <- NULL
+for (f in Uin) {
+  i <- which (FRRFsettings$station==f)
+  Pmax <- FRRFsettings$Emax[i]
+  frrf <- subset(FRRFlist, subset=file==f)
+  station <- paste(frrf$station[1],FRRFsettings$depth[i], "m")
+  FIT <- rbind(FIT, data.frame(fitFRRF(frrf=frrf, station=station, PARmax=Pmax, response=response), file=f, stat=frrf$station[1]))
+}
+names(FIT)[names(FIT)=="station"] <- "descriptor"
+names(FIT)[names(FIT)== "stat"] <- "station"
+
+```
+
+# Resulting parameters
+
+```{r}
+
+FF <- merge(FIT, FRRFfiles, by="file")
+names(FF)[names(FF)=="station.x"] <- c("station")
+FF[ii <- which(is.infinite(FF$rsq)),]  # deep stations -> remove them
+if (length(ii)) FF <- FF[-ii, ]
+
+FF[ii <- which(FF$alpha>100),]  # deep stations -> remove them
+if (length(ii)) FF <- FF[-ii, ]
+
+FF[ii <- which(FF$nrow<4),]  # deep stations -> remove them
+if (length(ii)) FF <- FF[-ii, ]
+
+#FF[ii <- which(FF$ps>100),]  # deep stations -> remove them
+
+names(FF)[names(FF)==c("station", "station.y")] <- c("file", "station")
+
+knitr::kable(FF[,c("station", "depth", "repl", "alpha", "eopt", "ps", "meanChl")], 
+             digits=c(0,0,0,4,0,2,2))
+```
+
+```{r, fig.width=8, fig.height=8}
+FF$station <- factor(FF$station, 
+                        levels = c("2O", "4O", "5O", "6B", "7F", "8O", "9B", 
+                                   "10O", "11M", "12O", "13B", "14O", "15F", 
+                                   "15O", "16O", "17O", "19O", "45O", "48F",
+                                   "49O", "50B", "51O", "52B", "53B", "54O",
+                                   "55O", "56F", "57O", "58B", "59B", "60B" ))
+    
+  
+par(mfrow=c(1,3))
+with (FF, boxplot(alpha~station, horizontal = TRUE, las=1, outline=FALSE))
+with (FF, boxplot(ps~station, horizontal = TRUE, las=1, outline=FALSE))
+with (FF, boxplot(meanChl~station, horizontal = TRUE, las=1, outline=FALSE))
+
+
+```
+
+## Photosynthesis
+
+To convert JVPII to mg C m3 h-1, we use the electron requirement for 
+C-fixation:
+
+	P = JVPII/PHIe,C × 12
+	
+We assume PHIe,C = 5 (mol elektronen/mol C).The factor 12 is to go from mmol to mgram.
+
+To estimate production, we need the lightintensity entering the water (E0 (µmol fotonen m 2 s 1 ) and the extinction coefficient (Kd m-1).
+
+The latter has been estimated for each station by fitting the light versus depth profiles, as:
+
+Iz = 
+
+I0*(p * exp(-k1*z) + (1-p) * exp(-k2*z))
+
+```{r}
+Lightpar <- read.csv("../../ctd/processed_data/IrradianceFit.csv")
+LightFun <- function(p=0.5, k1=0.1, k2=1, irr=1, 
+                     D=seq(0, 100, length.out=100))
+  irr*(p*exp(-k1*D)+(1-p)*exp(-k2*D))
+```
+
+The underway data hold the light intensity, in W/m2.
+
+Light is converted from W/m2 to uEinst/m2/s, assuming 4.6 uE/m2/s per W/m2. We assume that 50% of Light is PAR.
+
+```{r}
+Light <- Greenland[, c("Timestamp", "WeatherStation..CR6.WS..1..XDR.Solar.radiation.density..W.m2.")]
+colnames(Light)[1:2] <- c("time", "I_W.m2")
+Light <- subset(Light, subset= time>"2023-07-17" & time <= "2023-07-22")
+Light$par <- Light$I_W.m2*4.6*0.5
+
+plot(Light$time, Light$par, type="l")
+```
+
+Primary production of a station
+
+```{r}
+stat <- "15F"
+statnr <- 15
+
+PPstat <- function(
+    stat, statnr,        # to select PP and light parameters
+    fac = 1/5*12*24,     # convert from mol e/m2/hr to mgC/m2/d
+    DD  = seq(from=0, to=100, by=0.5)) # Depth layers (top, bottom)
+  {  
+  deltaD <- diff(DD)
+
+  DD <- 0.5*(DD[-1] + DD[-length(DD)])  # mean depth
+
+# photosynthesis parameters, averaged per depth 
+  # select station
+  Fsub <- subset(FF, 
+                 subset=station==stat)[, c("depth", "alpha", "eopt", "ps")]
+  
+  # average of parameters at the depth
+  F <- data.frame(alpha=tapply(Fsub$alpha, INDEX=Fsub$depth, FUN=mean),
+                  eopt =tapply(Fsub$eopt , INDEX=Fsub$depth, FUN=mean),
+                  ps   =tapply(Fsub$ps,    INDEX=Fsub$depth, FUN=mean))
+  Fdepth <- as.integer(row.names(F))
+
+  # each depth matched with these parameters - assume they are valid till 
+  # the middle with the next depth
+  fD <- c(0, 0.5*(Fdepth[-1]+Fdepth[-length(Fdepth)]), 1000)
+
+#  P <- NULL
+#  for (i in 1:length(DD))
+#    P <- rbind(P, F[max(1, which(fD[-length(fD)]<=DD[i] & fD[-1] > DD[i])),])
+
+  P <- cbind(approx(Fdepth, F$alpha, xout=DD, rule=2)$y,
+             approx(Fdepth, F$eopt, xout=DD, rule=2)$y,
+             approx(Fdepth, F$ps, xout=DD, rule=2)$y)
+  
+  # light extinction parameters for this station
+  Isub <- colMeans(subset(Lightpar, subset=station==statnr)[,-(1:3)])
+
+  Irel <- LightFun(p=Isub[1], k1=Isub[2], k2=Isub[3], irr=1, D=DD)
+
+  # Function to estimate the production per layer; 
+  EPprof <- function(p, PAR) # p and PAR are matrix/vector
+    PAR/((1/(p[,1]*p[,2]^2))*PAR^2+(1/p[,3]-2/(p[,1]*p[,2]))*PAR+(1/p[,1]))
+
+  Ptime <- function(irr)
+    sum(EPprof(P, Irel*irr)*deltaD)
+
+  PP <- sapply(Light$par, FUN=Ptime)
+  list(total = PP*fac, profile = EPprof(P, Irel*100), depth=DD)
+}
+
+PP <- data.frame(time=Light$time, PAR=Light$par,
+                 p2O=PPstat ("2O", 2)$total, 
+                 p4O=PPstat ("4O", 4)$total,
+                 p5O=PPstat ("5O", 5)$total, 
+                 p6B=PPstat ("6B", 6)$total,
+                 p7F=PPstat ("7F", 8)$total, 
+                 p8O=PPstat ("8O", 8)$total,  # NOTE: NO LIGHT DATA FOR ST 7
+                 p9B=PPstat ("9B", 9)$total,
+                 p10O=PPstat("10O",10)$total, 
+                 p11M=PPstat("11M",11)$total, 
+                 p12O=PPstat("12O",12)$total, 
+                 p13B=PPstat("13B",13)$total,
+                 p14O=PPstat("14O",14)$total, 
+                 p15F=PPstat("15F",15)$total, 
+                 p15O=PPstat("15O",15)$total, 
+                 p16O=PPstat("16O",16)$total,
+                 p17O=PPstat("17O",17)$total, 
+                 p19O=PPstat("19O",19)$total)
+Prof <- data.frame(depth=PPstat ("2O", 2)$depth,
+                 p2O=PPstat ("2O", 2)$profile, 
+                 p4O=PPstat ("4O", 4)$profile,
+                 p5O=PPstat ("5O", 5)$profile, 
+                 p6B=PPstat ("6B", 6)$profile,
+                 p7F=PPstat ("7F", 8)$profile, 
+                 p8O=PPstat ("8O", 8)$profile,  # NOTE: NO LIGHT DATA FOR ST 7
+                 p9B=PPstat ("9B", 9)$profile,
+                 p10O=PPstat("10O",10)$profile, 
+                 p11M=PPstat("11M",11)$profile, 
+                 p12O=PPstat("12O",12)$profile, 
+                 p13B=PPstat("13B",13)$profile,
+                 p14O=PPstat("14O",14)$profile, 
+                 p15F=PPstat("15F",15)$profile, 
+                 p15O=PPstat("15O",15)$profile, 
+                 p16O=PPstat("16O",16)$profile,
+                 p17O=PPstat("17O",17)$profile, 
+                 p19O=PPstat("19O",19)$profile)
+
+
+TOTPP <- data.frame(station=c(2,4,5,6,7,8,9,10,11,12,13,14,15,15,16,17,19),
+                    prod=colMeans(PP[,-(1:2)]))
+```
+
+```{r}
+Eudepth <- read.csv("eudepth.csv")
+Fu     <- droplevels(subset(FF, subset=depth<50 & station != "52B"))
+PIpars <- data.frame(station=c(2,4,5,6,7,8,9,10,11,12,13,14,15,15,16,17,19),
+                     alpha= tapply(Fu$alpha, INDEX=Fu$station, FUN=mean),
+                     ps=tapply(Fu$ps,        INDEX=Fu$station, FUN=mean),
+                     eopt=tapply(Fu$eopt,    INDEX=Fu$station, FUN=mean),
+                     chl=tapply(Fu$meanChl,  INDEX=Fu$station, FUN=mean),
+                     euphotic=Eudepth$euphotic,
+                     totPP = TOTPP$prod)
+with(PIpars, plot(station, alpha))
+PAR <- 0:500
+plot(EP  (p = c(PIpars$alpha[1], eopt = PIpars$eopt[1], ps = 1), #PIpars$ps[1]), 
+          PAR = PAR), type="l", lwd=2)
+nr <- nrow(PIpars)
+for (i in 2:nr)
+lines(EP(p=c(PIpars$alpha[i], eopt = PIpars$eopt[i], ps = 1), #PIpars$ps[i]), 
+          PAR = PAR), col=i)
+```
+
+```{r, fig.width=8, fig.height=10}
+par(mfrow=c(3,1), las=1, cex.main=2, cex.lab=1.5, cex.axis=1.3)
+plot(PIpars$station, PIpars$chl, xlab="station nr", ylab="ug/L", pch=16,
+     type="b", main= "mean Chlororophyll conc", cex=2)
+plot(PIpars$station, -PIpars$euphotic, xlab="station nr", ylab="m", pch=16,
+     type="b", main= "euphotic depth", ylim=c(-25,0), cex=2, col="blue")
+plot(PIpars$station, PIpars$totPP, xlab="station nr", ylab="mgC/m2/d", pch=16,
+     type="b", main= "Photosynthesis", col="darkgreen", cex=2)
+```
+
+
+
+
+
+
+
+```{r, fig.width=8, fig.height=10, warning=FALSE}
+par(mfrow=c(4,4), mar=c(4,4,4,0))
+inot <- which(FRRFunderway$Fo < 0) 
+
+#response <- "JVPIIest"
+response = "JVPII"
+
+if (length(inot)) FRRFunderway  <- FRRFunderway [-inot, ]
+Uin <- unique(FRRFunderway$file)
+FITunderway <- NULL
+for (f in Uin) {
+#  i <- which (FRRFsettings$station==f)
+  Pmax <- 200
+  frrf <- subset(FRRFunderway, subset=file==f)
+  station <- paste(f, ":", format(frrf$latitude[1], digits=5), "N,",
+                                  format(frrf$longitude[1], digits=5), "E")
+  FITunderway <- rbind(FITunderway, 
+                       data.frame(fitFRRF(frrf=frrf, station=station, 
+                                          PARmax=Pmax, response=response), 
+                                  file=f, stat=frrf$station[1]))
+}
+names(FITunderway)[names(FITunderway)=="station"] <- "descriptor"
+names(FITunderway)[names(FITunderway)== "stat"] <- "station"
+
+```

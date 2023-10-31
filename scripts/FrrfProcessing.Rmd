@@ -1,0 +1,160 @@
+---
+title: "Processing CANOE FRRF data"
+author: Karline Soetaert
+output: pdf_document
+date: "2023-07-19"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+require(plot3D)
+require(FRRF)
+require(oce)
+require(marelac)
+
+source("FRRFscripts.R")
+```
+
+# Underway data
+
+Time in the underway data is in CEST, which is two hours later than the greenland time, on which our clocks were set.
+
+```{r, echo=FALSE}
+load("../../cruise/processed_data/underway.rda")
+load("../../cruise/processed_data/events.rda")
+load("../../cruise/accessory/LATLONcoast.rda")
+load("../../cruise/processed_data/stations.rda") 
+J0 <- 19553
+Greenland <- subset(UnderWay, subset=longitude <= -42)
+Greenland$Timestamp <- as.POSIXct(Greenland$Timestamp)
+```
+
+``` {r}
+findclose <- function(time){
+   which.min(abs(Greenland$Timestamp-time))
+}
+```
+
+# FRRF station data
+
+Need to check how this station is logging to align it with the underway data.
+
+For now it is assumed it logs at Greenland time, 2 hours BEFORE the time of the underway data.
+
+```{r}
+rFRRF <- function(fn, dir){
+  specs <- strsplit(fn, ".csv")[[1]]
+  specs <- strsplit(specs, "_")[[1]][1:4]
+  names(specs) <- c("dstring", "station", "DepthName", "repl")
+  fr <- readFRRF(fn, dir, specs)
+}
+
+DIRlist <- c("../raw_data/170723_2O",  "../raw_data/190723_4O", 
+             "../raw_data/190723_5O",  "../raw_data/180723_6B",  "../raw_data/190723_6B",
+             "../raw_data/180723_7F",  "../raw_data/240723_8O",  "../raw_data/200723_9B",
+             "../raw_data/200723_10O", "../raw_data/230723_11M", "../raw_data/230723_12O",
+             "../raw_data/240723_13B", "../raw_data/210723_14O", "../raw_data/210723_15O",
+             "../raw_data/220723_15F", "../raw_data/210723_16O", "../raw_data/220723_17O",
+             "../raw_data/220723_19O", 
+             
+             "../raw_data/270723_45O", "../raw_data/280723_48F", "../raw_data/270723_49O",
+             "../raw_data/270723_50B", "../raw_data/310723_51O", "../raw_data/250723_52B",
+             "../raw_data/300723_53B", "../raw_data/310723_54O", "../raw_data/250723_55O",
+             "../raw_data/260723_56F", "../raw_data/290723_57O", "../raw_data/250723_58B", 
+             "../raw_data/290723_59B", "../raw_data/300723_60B")
+
+FRRFlist <- NULL
+
+for (dd in DIRlist){
+  DIR <- paste(getwd(),dd, sep="/")
+  ff <- list.files(DIR, "csv")  
+  for (i in 1:length(ff))
+    FRRFlist <- rbind(FRRFlist, rFRRF(fn=ff[i], dir=DIR))
+}
+
+#FF <- unique(FRRFlist$file)
+#FF <- FF[153:length(FF)]
+#FFset <- substr(FF, 8, nchar(FF))
+#FF_ <-  matrix(ncol=3, data= unlist(strsplit(FFset, "_")), byrow=TRUE)
+#FFhelp <- cbind(FF, FF_[,1], 0.112,  400, FF_[,2:3])
+
+#write.csv(file="temp.csv", FFhelp, row.names=FALSE)
+# time zone of greenland - add 7200 to go to UMT
+FRRFlist$date <- as.POSIXct(FRRFlist$date, 
+                            format="%d/%m/%y %H:%M:%S", tz="GMT")+7200
+
+# Settings of the FRRF
+FRRFsettings    <- read.csv("../raw_data/FRRFsettings")
+FRRFsettings    <- rbind(FRRFsettings, 
+                         read.csv("../raw_data/FRRFsettings2"))
+
+FRRFlist$Fblanc <- 0.0611
+FRRFlist$depth  <- NA
+FRRFlist$latitude <- FRRFlist$longitude <- NA
+
+for (i in 1:nrow(FRRFsettings)){
+  file <- FRRFsettings[i,"station"]
+  nr   <- FRRFsettings[i,"nr"]
+  stat <- subset(stations, subset=station == nr)
+  ii   <- which (FRRFlist$file == file)
+  FRRFlist$Fblanc[ii]  <- FRRFsettings$Fblanc[i]
+  FRRFlist$depth[ii]   <- FRRFsettings$depth[i]
+  if (nrow(stat)){
+    FRRFlist$latitude[ii]  <- stat$latitude
+    FRRFlist$longitude[ii] <- stat$longitude
+  }
+}
+
+# assume time zone of greenland is "atlantic daylength time
+FRRFlist$date <- as.POSIXct(FRRFlist$date, 
+                            format="%d/%m/%y %H:%M:%S", tz="GMT")+7200
+
+colnames(FRRFlist)[colnames(FRRFlist)=="JVPII"] <- "JVPII_est"
+
+save(file = "../processed_data/FRRFlist.rda", FRRFlist)
+write.csv(file = "../processed_data/FRRFlist.csv", FRRFlist)
+```
+
+# FRRF underway data
+
+```{r}
+rFRRF <- function(fn, dir){
+  specs <- strsplit(fn, ".csv")[[1]]
+  specs <- strsplit(specs, "_")[[1]][1:4]
+  names(specs) <- c("dstring", "station", "DepthName", "repl")
+  fr <- readFRRF(fn, dir, specs)
+}
+
+DIRlist <- c("../raw_data/continuous 4O night 19-20.07.23",  
+             "../raw_data/continuous 6B night 18-19.07.23", 
+             "../raw_data/continuous 8O night 24-25.07.23",  
+             "../raw_data/continuous 9B night 20-21.07.23",  
+             "../raw_data/continuous 11M afternoon 23.07.23",
+             "../raw_data/continuous transect to the fjords/20230716",
+             "../raw_data/continuous transect to the fjords/20230717")
+
+FRRFunderway <- NULL
+
+for (dd in DIRlist){
+  DIR <- paste(getwd(),dd, sep="/")
+  ff <- list.files(DIR, "csv")  
+  for (i in 1:length(ff))
+    FRRFunderway <- rbind(FRRFunderway, rFRRF(fn=ff[i], dir=DIR))
+}
+
+FRRFunderway$date <- as.POSIXct(FRRFunderway$date, 
+                                format="%d/%m/%y %H:%M:%S", tz="GMT")+7200
+
+ii <- sapply(FRRFunderway$date, FUN=findclose)
+FRRFunderway$longitude <- Greenland$longitude[ii]
+FRRFunderway$latitude  <- Greenland$latitude[ii]
+FRRFunderway$station   <- "underway"
+FRRFunderway$DepthName <- "surface"
+FRRFunderway$repl      <- NA
+FRRFunderway$Fblanc <- 0.0611
+
+colnames(FRRFunderway)[colnames(FRRFunderway)=="JVPII"] <- "JVPII_est"
+
+save(file = "../processed_data/FRRFunderway.rda", FRRFunderway)
+write.csv(file = "../processed_data/FRRFunderway.csv", FRRFunderway)
+```
